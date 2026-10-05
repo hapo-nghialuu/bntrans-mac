@@ -324,6 +324,7 @@ import SwiftUI
             win.title = "BNTrans"
             win.minSize = NSSize(width: 720, height: 560)
             win.contentView = NSHostingView(rootView: SettingsView())
+            win.center()
             settingsWindow = win
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
