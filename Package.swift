@@ -7,7 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "BNTransMac",
-            path: "Sources/BNTransMac"
+            path: "Sources/BNTransMac",
+            resources: [.process("Resources")]
         )
     ]
 )

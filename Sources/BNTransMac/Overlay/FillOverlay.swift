@@ -51,9 +51,11 @@ import AppKit
             bar.frame.origin.y = rect.height - barH
         }
         bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor.windowBackgroundColor
-            .withAlphaComponent(0.95).cgColor
+        bar.layer?.backgroundColor = NSColor(BTTheme.background)
+            .withAlphaComponent(0.96).cgColor
         bar.layer?.cornerRadius = 8
+        bar.layer?.borderWidth = 1
+        bar.layer?.borderColor = NSColor(BTTheme.border).cgColor
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 4
@@ -137,12 +139,14 @@ import AppKit
         v.frame = f
         v.isBezeled = false
         v.drawsBackground = true
-        v.backgroundColor = NSColor.windowBackgroundColor
-        v.textColor = .labelColor
+        v.backgroundColor = NSColor(BTTheme.background)
+        v.textColor = NSColor(BTTheme.primary)
         v.alignment = .center
         v.font = fitFont(text: s.translation, in: f.size)
         v.wantsLayer = true
-        v.layer?.cornerRadius = 3
+        v.layer?.cornerRadius = 4
+        v.layer?.borderWidth = 0.5
+        v.layer?.borderColor = NSColor(BTTheme.border).cgColor
         return v
     }
 
@@ -151,7 +155,7 @@ import AppKit
     private func fitFont(text: String, in size: CGSize) -> NSFont {
         var pt = min(18, size.height - 2)
         while pt > 7 {
-            let f = NSFont.systemFont(ofSize: pt)
+            let f = BTFont.sans(pt, weight: .medium)
             let need = (text as NSString).boundingRect(
                 with: CGSize(width: size.width - 4, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin],
@@ -173,12 +177,10 @@ import AppKit
         b.isBordered = false
         b.wantsLayer = true
         b.layer?.cornerRadius = 6
-        b.contentTintColor = active ? .white : .labelColor
+        b.contentTintColor = active ? .white : NSColor(BTTheme.primary)
         b.layer?.backgroundColor =
-            active
-            ? NSColor.controlAccentColor.cgColor
-            : NSColor.clear.cgColor
-        b.font = .systemFont(ofSize: 12, weight: .medium)
+            active ? NSColor(BTTheme.accent).cgColor : NSColor.clear.cgColor
+        b.font = BTFont.sans(12, weight: .medium)
         return b
     }
 }

@@ -65,6 +65,26 @@ private final class SelectionView: NSView {
     init(screenFrame: NSRect, onFinish: @escaping RegionCompletion) {
         self.onFinish = onFinish
         super.init(frame: NSRect(origin: .zero, size: screenFrame.size))
+
+        // Hint pill at top-center — Plex Sans on a dark plate.
+        let hint = NSTextField(labelWithString: "Drag to select  ·  Esc to cancel")
+        hint.font = BTFont.sans(12, weight: .medium)
+        hint.textColor = .white
+        hint.isBezeled = false
+        hint.drawsBackground = true
+        hint.backgroundColor = NSColor(BTTheme.primary).withAlphaComponent(0.85)
+        hint.wantsLayer = true
+        hint.layer?.cornerRadius = 4
+        hint.alignment = .center
+        hint.sizeToFit()
+        let pad: CGFloat = 10
+        hint.frame.size.width += pad * 2
+        hint.frame.size.height += 6
+        hint.frame.origin = NSPoint(
+            x: (screenFrame.width - hint.frame.width) / 2,
+            y: screenFrame.height - hint.frame.height - 40
+        )
+        addSubview(hint)
     }
 
     required init?(coder: NSCoder) { fatalError() }
