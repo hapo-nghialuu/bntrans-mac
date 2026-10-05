@@ -658,7 +658,6 @@ private struct AboutPane: View {
 /// three panes.
 struct SettingsView: View {
     @State private var settings = Settings.load()
-    @State private var saved = false
     @State private var tab: SettingsTab =
         CommandLine.arguments.contains("--open-select")
             || CommandLine.arguments.contains("--click-select")
@@ -670,7 +669,6 @@ struct SettingsView: View {
 
             VStack(spacing: 0) {
                 pane
-                saveBar
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(BTTheme.background)
@@ -678,6 +676,11 @@ struct SettingsView: View {
         .frame(width: 720, height: 560)
         .overlay(SettingsWindowAppearanceView().frame(width: 0, height: 0))
         .tint(BTTheme.accent)
+        // Auto-save — System Settings style: every change persists and
+        // re-applies (theme, hotkey) immediately via .bntransSettingsChanged.
+        .onChange(of: settings) { _, value in
+            value.save()
+        }
     }
 
     @ViewBuilder private var pane: some View {
@@ -687,30 +690,5 @@ struct SettingsView: View {
         case .capture: CapturePane(settings: $settings)
         case .about: AboutPane()
         }
-    }
-
-    private var saveBar: some View {
-        HStack(spacing: 10) {
-            if saved {
-                Text("Saved")
-                    .font(.plexSans(12))
-                    .foregroundStyle(BTTheme.secondary)
-                    .transition(.opacity)
-            }
-            Spacer()
-            Button("Save") {
-                settings.save()
-                withAnimation { saved = true }
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    saved = false
-                }
-            }
-            .buttonStyle(InstrumentInlineButtonStyle(prominent: true))
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) { BTTheme.chromeRule.frame(height: 1) }
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 
 /// UserDefaults-backed settings — same shape as the extension's provider
 /// config so users can reuse the same keys/models.
-struct Settings {
+struct Settings: Equatable {
     var providerType: String = "gemini" // gemini | openai | openrouter | groq | ollama | custom
     var apiKey: String = ""
     var baseUrl: String = ""

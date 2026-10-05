@@ -60,6 +60,8 @@ import SwiftUI
         installMainMenu()
 
         registerHotKey()
+        let s = Settings.load()
+        lastHotkey = (s.hotkeyKeyCode, s.hotkeyModifiers)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(settingsChanged),
@@ -68,10 +70,19 @@ import SwiftUI
         )
     }
 
+    /// Auto-save fires on every settings field edit — only re-register the
+    /// Carbon hotkey when the actual combo changed, not on each keystroke.
+    private var lastHotkey: (key: Int, mods: Int)?
+
     @objc private func settingsChanged() {
-        AppAppearance.apply(Settings.load().appearance)
-        registerHotKey()
-        updateCaptureMenuTitle()
+        let s = Settings.load()
+        AppAppearance.apply(s.appearance)
+        let combo = (s.hotkeyKeyCode, s.hotkeyModifiers)
+        if lastHotkey?.key != combo.0 || lastHotkey?.mods != combo.1 {
+            lastHotkey = combo
+            registerHotKey()
+            updateCaptureMenuTitle()
+        }
     }
 
     /// Minimal main menu — just an Edit submenu with the standard items so
