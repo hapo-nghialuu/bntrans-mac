@@ -12,6 +12,7 @@ import AppKit
         rect: CGRect,
         result: ImageResult,
         mode: ImageMode,
+        image: CGImage?,
         onMode: @escaping @MainActor (ImageMode) -> Void
     ) {
         close()
@@ -106,7 +107,7 @@ import AppKit
             : result.segments
         for s in segs {
             root.addSubview(
-                segmentView(s, in: rect.size, barH: barH)
+                segmentView(s, in: rect.size, barH: barH, image: image)
             )
         }
 
@@ -120,41 +121,90 @@ import AppKit
         window = nil
     }
 
-    /// Map normalized 0-1000 box → a view positioned over the region.
-    private func segmentView(_ s: Segment, in size: CGSize, barH: CGFloat)
-        -> NSView
-    {
+    /// Map normalized 0-1000 box → a view positioned over the region. The
+    /// box is inflated a few points so translated text fully covers the
+    /// original glyphs, filled with the colour sampled underneath (like a
+    /// quick inpaint), and bordered by nothing — the border is what made
+    /// segments read as pasted labels.
+    private func segmentView(
+        _ s: Segment, in size: CGSize, barH: CGFloat, image: CGImage?
+    ) -> NSView {
         let yMin = s.box[0] / 1000, xMin = s.box[1] / 1000
         let yMax = s.box[2] / 1000, xMax = s.box[3] / 1000
         // box y is top-down (image space); flip for Cocoa
-        let f = CGRect(
+        var f = CGRect(
             x: xMin * size.width,
             y: (1 - yMax) * size.height,
             width: max(1, (xMax - xMin) * size.width),
             height: max(1, (yMax - yMin) * size.height)
         )
+        // overhang so the original text edges cannot peek out
+        f = f.insetBy(dx: -6, dy: -4)
+            .intersection(CGRect(origin: .zero, size: size))
+
+        let fill = image.flatMap { averageColor(of: $0, box: s) }
+            ?? NSColor(BTTheme.background)
+        let lum = Self.luminance(of: fill)
+
         let v = NSTextField(
             wrappingLabelWithString: s.translation
         )
         v.frame = f
         v.isBezeled = false
         v.drawsBackground = true
-        v.backgroundColor = NSColor(BTTheme.background)
-        v.textColor = NSColor(BTTheme.primary)
+        v.backgroundColor = fill
+        v.textColor = lum > 0.6
+            ? NSColor(srgbRed: 0.086, green: 0.082, blue: 0.059, alpha: 1) // ink
+            : NSColor(srgbRed: 0.949, green: 0.941, blue: 0.910, alpha: 1) // paper
         v.alignment = .center
         v.font = fitFont(text: s.translation, in: f.size)
         v.wantsLayer = true
-        v.layer?.cornerRadius = 4
-        v.layer?.borderWidth = 0.5
-        v.layer?.borderColor = NSColor(BTTheme.border).cgColor
+        v.layer?.cornerRadius = 3
         return v
     }
 
+    /// Average colour of the pixels under a segment — renders the image
+    /// crop into a single 1×1 context.
+    private func averageColor(of image: CGImage, box s: Segment) -> NSColor? {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        let px = CGRect(
+            x: s.box[1] / 1000 * w,
+            y: s.box[0] / 1000 * h,
+            width: max(1, (s.box[3] - s.box[1]) / 1000 * w),
+            height: max(1, (s.box[2] - s.box[0]) / 1000 * h)
+        ).intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        guard px.width > 1, px.height > 1,
+              let cropped = image.cropping(to: px) else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let ctx = CGContext(
+            data: &pixel, width: 1, height: 1,
+            bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.interpolationQuality = .low
+        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return NSColor(
+            srgbRed: CGFloat(pixel[0]) / 255,
+            green: CGFloat(pixel[1]) / 255,
+            blue: CGFloat(pixel[2]) / 255,
+            alpha: 1
+        )
+    }
+
+    private static func luminance(of color: NSColor) -> CGFloat {
+        guard let srgb = color.usingColorSpace(.sRGB) else { return 0.5 }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        srgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return 0.299 * r + 0.587 * g + 0.114 * b
+    }
+
     /// Shrink the font until the text fits its box (same trick as the
-    /// extension's fill segments).
+    /// extension's fill segments). Floor at 9pt — smaller is unreadable,
+    /// so let it overflow the box slightly instead.
     private func fitFont(text: String, in size: CGSize) -> NSFont {
         var pt = min(18, size.height - 2)
-        while pt > 7 {
+        while pt > 9 {
             let f = BTFont.sans(pt, weight: .medium)
             let need = (text as NSString).boundingRect(
                 with: CGSize(width: size.width - 4, height: .greatestFiniteMagnitude),
@@ -164,7 +214,7 @@ import AppKit
             if need.height <= size.height { return f }
             pt -= 1
         }
-        return NSFont.systemFont(ofSize: 7)
+        return BTFont.sans(9, weight: .medium)
     }
 
     private func pillButton(

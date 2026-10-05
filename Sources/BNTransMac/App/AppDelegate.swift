@@ -208,8 +208,10 @@ import SwiftUI
             )
             _ = await MainActor.run {
                 if settings.fillEnabled {
-                    overlay.show(rect: rect, result: result, mode: mode) {
-                        [weak self] m in
+                    overlay.show(
+                        rect: rect, result: result, mode: mode,
+                        image: cropped
+                    ) { [weak self] m in
                         Task { await self?.run(rect: rect, mode: m) }
                     }
                 } else {
