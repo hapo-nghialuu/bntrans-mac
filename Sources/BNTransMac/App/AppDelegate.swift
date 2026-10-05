@@ -250,7 +250,57 @@ import SwiftUI
     }
 
     /// Non-objc entry point so the `--open-settings` debug flag can reuse it.
-    func openSettingsForDebug() { openSettings() }
+    func openSettingsForDebug() {
+        openSettings()
+        if CommandLine.arguments.contains("--click-select") {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                self.postClickOnSelectAnchor()
+            }
+        }
+    }
+
+    /// Debug: synthesize a real mouse click at the model select's anchor so
+    /// the full event-dispatch path (hit-test → Button → isOpen → panel) is
+    /// exercised exactly like a user click. Logs the outcome.
+    private func postClickOnSelectAnchor() {
+        guard let win = settingsWindow,
+              let anchor = Self.findView(
+                identified: "bt-select-anchor", in: win.contentView) else {
+            NSLog("[BTClick] no window/anchor")
+            return
+        }
+        let centerInWindow = anchor.convert(
+            CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: nil)
+        NSLog("[BTClick] anchor frame %@ -> window %@", String(describing: anchor.frame), String(describing: centerInWindow))
+        for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            guard let ev = NSEvent.mouseEvent(
+                with: type, location: centerInWindow,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: win.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
+                continue
+            }
+            NSApp.postEvent(ev, atStart: false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            let panels = (win.childWindows ?? []).map {
+                "panel frame=\($0.frame) visible=\($0.isVisible)"
+            }
+            NSLog("[BTClick] after click, children: %@", panels.joined(separator: " | "))
+        }
+    }
+
+    private static func findView(
+        identified id: String, in view: NSView?
+    ) -> NSView? {
+        guard let view else { return nil }
+        if view.identifier?.rawValue == id { return view }
+        for sub in view.subviews {
+            if let found = findView(identified: id, in: sub) { return found }
+        }
+        return nil
+    }
 
     @objc private func openSettings() {
         if settingsWindow == nil {

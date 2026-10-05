@@ -190,6 +190,9 @@ extension View {
 
 // MARK: - Menu select
 
+/// Tallest the dropdown may grow before it scrolls.
+private let instrumentMenuMaxPanelHeight: CGFloat = 360
+
 /// Option list hosted inside the borderless AppKit menu panel.
 private struct InstrumentMenuPanelContent<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
@@ -198,41 +201,44 @@ private struct InstrumentMenuPanelContent<Value: Hashable>: View {
     let onPick: (Value) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                if index > 0 {
-                    BTTheme.hairline.frame(height: 1)
-                }
-                Button {
-                    onPick(option.value)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(option.title)
-                            .font(.plexSans(12))
-                            .foregroundStyle(BTTheme.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if option.value == selection {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(BTTheme.accent)
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                    if index > 0 {
+                        BTTheme.hairline.frame(height: 1)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(option.value == selection
-                                ? BTTheme.selectedSurface
-                                : Color.clear)
-                    .contentShape(Rectangle())
+                    Button {
+                        onPick(option.value)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(option.title)
+                                .font(.plexSans(12))
+                                .foregroundStyle(BTTheme.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if option.value == selection {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(BTTheme.accent)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(option.value == selection
+                                    ? BTTheme.selectedSurface
+                                    : Color.clear)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
             }
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
         .frame(width: width, alignment: .leading)
         .background(BTTheme.background)
         .overlay(
@@ -256,6 +262,7 @@ private struct InstrumentMenuPanelBridge<Value: Hashable>: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
+        view.identifier = NSUserInterfaceItemIdentifier("bt-select-anchor")
         context.coordinator.anchorView = view
         return view
     }
@@ -339,16 +346,32 @@ private struct InstrumentMenuPanelBridge<Value: Hashable>: NSViewRepresentable {
             hosting = nil
         }
 
+        private func panelSize(
+            fittingHeight: CGFloat, width: CGFloat, anchor: NSView
+        ) -> NSSize {
+            // Cap growth so long option lists scroll instead of running off
+            // the screen edge (OpenRouter returns 400+ models).
+            var available = instrumentMenuMaxPanelHeight
+            if let screen = anchor.window?.screen {
+                let rect = anchor.convert(anchor.bounds, to: nil)
+                let screenRect = anchor.window!.convertToScreen(rect)
+                let vis = screen.visibleFrame
+                let below = screenRect.minY - vis.minY - 8
+                let above = vis.maxY - screenRect.maxY - 8
+                available = max(
+                    140, min(instrumentMenuMaxPanelHeight, max(below, above)))
+            }
+            return NSSize(width: width, height: min(fittingHeight, available))
+        }
+
         private func present(from anchor: NSView) {
             guard let parentWindow = anchor.window else { return }
             let width = max(anchor.bounds.width, 180)
             let root = makeContent(width: width)
             let host = NSHostingView(rootView: root)
             host.appearance = NSApp.effectiveAppearance
-            let fitting = host.fittingSize
-            let size = NSSize(
-                width: width,
-                height: max(fitting.height, CGFloat(options.count) * 32 + 8))
+            let size = panelSize(
+                fittingHeight: host.fittingSize.height, width: width, anchor: anchor)
             host.frame = NSRect(origin: .zero, size: size)
 
             let newPanel = NSPanel(
@@ -385,11 +408,9 @@ private struct InstrumentMenuPanelBridge<Value: Hashable>: NSViewRepresentable {
         private func refreshContent(anchorWidth: CGFloat) {
             let width = max(anchorWidth, 180)
             hosting?.rootView = makeContent(width: width)
-            guard let hosting, let panel else { return }
-            let fitting = hosting.fittingSize
-            let size = NSSize(
-                width: width,
-                height: max(fitting.height, CGFloat(options.count) * 32 + 8))
+            guard let hosting, let panel, let anchor = anchorView else { return }
+            let size = panelSize(
+                fittingHeight: hosting.fittingSize.height, width: width, anchor: anchor)
             hosting.frame = NSRect(origin: .zero, size: size)
             var frame = panel.frame
             frame.size = size
@@ -414,9 +435,17 @@ private struct InstrumentMenuPanelBridge<Value: Hashable>: NSViewRepresentable {
             let rectInWindow = anchor.convert(anchor.bounds, to: nil)
             let screenRect = parentWindow.convertToScreen(rectInWindow)
             let size = panel.frame.size
-            let origin = NSPoint(
-                x: screenRect.minX,
-                y: screenRect.minY - 4 - size.height)
+            // Open downward by default; flip above the trigger when the
+            // space below cannot hold the panel but the space above can.
+            var y = screenRect.minY - 4 - size.height
+            if let vis = parentWindow.screen?.visibleFrame {
+                let below = screenRect.minY - vis.minY - 4
+                let above = vis.maxY - screenRect.maxY - 4
+                if below < size.height, above > below {
+                    y = screenRect.maxY + 4
+                }
+            }
+            let origin = NSPoint(x: screenRect.minX, y: y)
             panel.setFrame(NSRect(origin: origin, size: size), display: true)
         }
 

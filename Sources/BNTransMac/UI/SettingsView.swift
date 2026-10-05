@@ -325,6 +325,11 @@ private struct GeneralPane: View {
 private struct ProviderPane: View {
     @Binding var settings: Settings
 
+    /// `--open-select` opens Settings straight to this pane with the model
+    /// select force-opened — exercises the real ScrollView hierarchy.
+    private static let debugOpenSelect =
+        CommandLine.arguments.contains("--open-select")
+
     @State private var models: [String] = []
     @State private var modelsLoading = false
     @State private var modelsError: String?
@@ -401,7 +406,8 @@ private struct ProviderPane: View {
                         HStack(spacing: 8) {
                             InstrumentMenuSelect(
                                 options: modelOptions,
-                                selection: modelSelection
+                                selection: modelSelection,
+                                debugOpen: Self.debugOpenSelect
                             )
                             refreshButton
                         }
@@ -653,7 +659,10 @@ private struct AboutPane: View {
 struct SettingsView: View {
     @State private var settings = Settings.load()
     @State private var saved = false
-    @State private var tab: SettingsTab = .general
+    @State private var tab: SettingsTab =
+        CommandLine.arguments.contains("--open-select")
+            || CommandLine.arguments.contains("--click-select")
+        ? .provider : .general
 
     var body: some View {
         HStack(spacing: 0) {
