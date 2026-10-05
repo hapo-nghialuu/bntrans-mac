@@ -190,8 +190,9 @@ extension View {
 
 // MARK: - Menu select
 
-/// Tallest the dropdown may grow before it scrolls.
-private let instrumentMenuMaxPanelHeight: CGFloat = 360
+/// Fixed panel height when the option list overflows — the scroll view
+/// inside fills it and scrolls the rest. Short lists hug their content.
+private let instrumentMenuPanelHeight: CGFloat = 300
 
 /// Option list hosted inside the borderless AppKit menu panel.
 private struct InstrumentMenuPanelContent<Value: Hashable>: View {
@@ -349,9 +350,9 @@ private struct InstrumentMenuPanelBridge<Value: Hashable>: NSViewRepresentable {
         private func panelSize(
             fittingHeight: CGFloat, width: CGFloat, anchor: NSView
         ) -> NSSize {
-            // Cap growth so long option lists scroll instead of running off
-            // the screen edge (OpenRouter returns 400+ models).
-            var available = instrumentMenuMaxPanelHeight
+            // Fixed height (panel scrolls) once the list overflows; shrunk
+            // further only if neither side of the anchor has room.
+            var available = instrumentMenuPanelHeight
             if let screen = anchor.window?.screen {
                 let rect = anchor.convert(anchor.bounds, to: nil)
                 let screenRect = anchor.window!.convertToScreen(rect)
@@ -359,7 +360,7 @@ private struct InstrumentMenuPanelBridge<Value: Hashable>: NSViewRepresentable {
                 let below = screenRect.minY - vis.minY - 8
                 let above = vis.maxY - screenRect.maxY - 8
                 available = max(
-                    140, min(instrumentMenuMaxPanelHeight, max(below, above)))
+                    140, min(instrumentMenuPanelHeight, max(below, above)))
             }
             return NSSize(width: width, height: min(fittingHeight, available))
         }
