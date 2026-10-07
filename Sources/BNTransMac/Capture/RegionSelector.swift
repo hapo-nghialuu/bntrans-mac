@@ -126,13 +126,40 @@ private final class SelectionView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.35).setFill()
         dirtyRect.fill()
-        if current != .zero {
-            NSColor.clear.setFill()
-            current.fill(using: .copy) // punch a hole
-            NSColor.white.setStroke()
-            let path = NSBezierPath(rect: current)
-            path.lineWidth = 1.5
-            path.stroke()
+        guard current != .zero else { return }
+
+        NSColor.clear.setFill()
+        current.fill(using: .copy) // punch a hole
+
+        // green selection border + W × H badge — the look of classic
+        // screen-translate tools (Screen Translate / Pot style)
+        NSColor(srgbRed: 0.20, green: 0.82, blue: 0.36, alpha: 1).setStroke()
+        let path = NSBezierPath(rect: current.insetBy(dx: 0.75, dy: 0.75))
+        path.lineWidth = 1.5
+        path.stroke()
+
+        let label = "\(Int(current.width)) × \(Int(current.height))"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: BTFont.mono(10, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        let textSize = (label as NSString).size(withAttributes: attrs)
+        let pad: CGFloat = 5
+        var badge = NSRect(
+            x: current.minX,
+            y: current.maxY + 5,
+            width: textSize.width + pad * 2,
+            height: textSize.height + pad
+        )
+        if badge.maxY > bounds.maxY - 4 {
+            badge.origin.y = current.maxY - badge.height - 5 // flip inside
         }
+        NSColor.black.withAlphaComponent(0.75).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: 3, yRadius: 3).fill()
+        (label as NSString).draw(
+            at: NSPoint(
+                x: badge.minX + pad,
+                y: badge.minY + (badge.height - textSize.height) / 2),
+            withAttributes: attrs)
     }
 }

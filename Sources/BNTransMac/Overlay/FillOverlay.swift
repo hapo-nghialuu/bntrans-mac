@@ -19,7 +19,18 @@ import AppKit
         self.regionRect = rect
         self.onMode = onMode
 
-        let barH: CGFloat = 30
+        let barH: CGFloat = 28
+        // icon toolbar pinned under the region's bottom edge (the classic
+        // screen-translate look); flips above the top edge when the region
+        // hugs the bottom of the screen
+        var barBelow = true
+        if let screen = NSScreen.screens.first(where: {
+            $0.frame.intersects(rect)
+        }), rect.minY - barH < screen.frame.minY {
+            barBelow = false
+        }
+        let segYOffset: CGFloat = barBelow ? barH : 0
+
         let win = NSWindow(
             contentRect: rect,
             styleMask: [.borderless],
@@ -33,48 +44,54 @@ import AppKit
         win.collectionBehavior = [.canJoinAllSpaces, .stationary]
         win.hasShadow = false
 
-        let root = NSView(frame: NSRect(origin: .zero, size: rect.size))
+        let root = NSView(
+            frame: NSRect(
+                origin: .zero,
+                size: CGSize(width: rect.width, height: rect.height + barH)
+            )
+        )
         root.wantsLayer = true
 
-        // toolbar pill, pinned above the region (flips inside if near top)
         let bar = NSView(
             frame: NSRect(
                 x: 0,
-                y: rect.height,
+                y: barBelow ? 0 : rect.height,
                 width: rect.width,
                 height: barH
             )
         )
-        // flip inside when the bar would overflow the screen top
-        if let screen = NSScreen.screens.first(where: {
-            $0.frame.intersects(rect)
-        }), rect.maxY + barH > screen.frame.maxY {
-            bar.frame.origin.y = rect.height - barH
-        }
         bar.wantsLayer = true
         bar.layer?.backgroundColor = NSColor(BTTheme.background)
             .withAlphaComponent(0.96).cgColor
-        bar.layer?.cornerRadius = 8
+        bar.layer?.cornerRadius = 6
         bar.layer?.borderWidth = 1
         bar.layer?.borderColor = NSColor(BTTheme.border).cgColor
+
         let stack = NSStackView()
         stack.orientation = .horizontal
-        stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
-        let tr = pillButton(
-            title: "Dịch",
-            active: mode == .translate
-        ) { [weak self] in self?.onMode?(.translate) }
-        let ex = pillButton(
-            title: "Giải thích",
-            active: mode == .explain
-        ) { [weak self] in self?.onMode?(.explain) }
-        let x = pillButton(title: "×", active: false) { [weak self] in
-            self?.close()
-        }
-        stack.addArrangedSubview(tr)
-        stack.addArrangedSubview(ex)
-        stack.addArrangedSubview(x)
+        stack.spacing = 2
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 4, bottom: 2, right: 4)
+        stack.addArrangedSubview(
+            iconButton(
+                symbol: "globe", tip: "Dịch",
+                active: mode == .translate
+            ) { [weak self] in self?.onMode?(.translate) })
+        stack.addArrangedSubview(
+            iconButton(
+                symbol: "lightbulb", tip: "Giải thích",
+                active: mode == .explain
+            ) { [weak self] in self?.onMode?(.explain) })
+        stack.addArrangedSubview(
+            iconButton(
+                symbol: "doc.on.doc", tip: "Copy bản dịch", active: false
+            ) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(result.translation, forType: .string)
+            })
+        stack.addArrangedSubview(
+            iconButton(symbol: "xmark", tip: "Đóng", active: false) {
+                [weak self] in self?.close()
+            })
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -83,31 +100,29 @@ import AppKit
         ])
         root.addSubview(bar)
 
-        // window = region + barH on top; the bar sits inside that extra band
-        // (or flipped inside the top edge when the region hugs the screen top)
+        // window = region + barH band; with the bar below, the band hangs
+        // under the region so segments shift up by barH inside the window
         win.setFrame(
             CGRect(
                 x: rect.minX,
-                y: rect.minY,
+                y: barBelow ? rect.minY - barH : rect.minY,
                 width: rect.width,
                 height: rect.height + barH
             ),
             display: false
         )
-        root.frame = NSRect(
-            origin: .zero,
-            size: CGSize(width: rect.width, height: rect.height + barH)
-        )
-        bar.frame.origin.y =
-            bar.frame.origin.y == rect.height ? rect.height : rect.height - barH
 
         // segments — opaque boxes covering the original text
+        NSLog(
+            "[BTFill] mode=%@ segments=%d translationLen=%d first=%@",
+            "\(mode)", result.segments.count, result.translation.count,
+            String(result.translation.prefix(80)))
         let segs = result.segments.isEmpty
             ? [Segment(box: [0, 0, 1000, 1000], source: "", translation: result.translation)]
             : result.segments
         for s in segs {
             root.addSubview(
-                segmentView(s, in: rect.size, barH: barH, image: image)
+                segmentView(s, in: rect.size, yOffset: segYOffset, image: image)
             )
         }
 
@@ -127,20 +142,22 @@ import AppKit
     /// quick inpaint), and bordered by nothing — the border is what made
     /// segments read as pasted labels.
     private func segmentView(
-        _ s: Segment, in size: CGSize, barH: CGFloat, image: CGImage?
+        _ s: Segment, in size: CGSize, yOffset: CGFloat, image: CGImage?
     ) -> NSView {
         let yMin = s.box[0] / 1000, xMin = s.box[1] / 1000
         let yMax = s.box[2] / 1000, xMax = s.box[3] / 1000
         // box y is top-down (image space); flip for Cocoa
         var f = CGRect(
             x: xMin * size.width,
-            y: (1 - yMax) * size.height,
+            y: yOffset + (1 - yMax) * size.height,
             width: max(1, (xMax - xMin) * size.width),
             height: max(1, (yMax - yMin) * size.height)
         )
-        // overhang so the original text edges cannot peek out
+        // overhang so the original text edges cannot peek out — clamped to
+        // the region band so segments never dip into the toolbar strip
         f = f.insetBy(dx: -6, dy: -4)
-            .intersection(CGRect(origin: .zero, size: size))
+            .intersection(
+                CGRect(x: 0, y: yOffset, width: size.width, height: size.height))
 
         let fill = image.flatMap { averageColor(of: $0, box: s) }
             ?? NSColor(BTTheme.background)
@@ -217,20 +234,29 @@ import AppKit
         return BTFont.sans(9, weight: .medium)
     }
 
-    private func pillButton(
-        title: String,
+    /// Square icon button (SF Symbol on paper), like the tool rows in
+    /// screen-translate apps — accent fill marks the active mode.
+    private func iconButton(
+        symbol: String,
+        tip: String,
         active: Bool,
         action: @escaping () -> Void
     ) -> NSButton {
-        let b = CallbackButton(title: title, target: nil, action: nil)
+        let b = CallbackButton(title: "", target: nil, action: nil)
         b.onClick = action
         b.isBordered = false
         b.wantsLayer = true
-        b.layer?.cornerRadius = 6
-        b.contentTintColor = active ? .white : NSColor(BTTheme.primary)
-        b.layer?.backgroundColor =
-            active ? NSColor(BTTheme.accent).cgColor : NSColor.clear.cgColor
-        b.font = BTFont.sans(12, weight: .medium)
+        b.layer?.cornerRadius = 4
+        b.image = NSImage(
+            systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(
+                .init(pointSize: 12, weight: .medium))
+        b.contentTintColor = active
+            ? .white : NSColor(BTTheme.primary)
+        b.layer?.backgroundColor = active
+            ? NSColor(BTTheme.accent).cgColor : NSColor.clear.cgColor
+        b.toolTip = tip
+        b.frame.size = NSSize(width: 24, height: 24)
         return b
     }
 }
