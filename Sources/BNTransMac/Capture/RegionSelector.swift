@@ -61,6 +61,7 @@ private final class SelectionView: NSView {
     private let onFinish: RegionCompletion
     private var start: NSPoint?
     private var current: NSRect = .zero
+    private let badge = NSTextField(labelWithString: "")
 
     init(screenFrame: NSRect, onFinish: @escaping RegionCompletion) {
         self.onFinish = onFinish
@@ -85,6 +86,20 @@ private final class SelectionView: NSView {
             y: screenFrame.height - hint.frame.height - 40
         )
         addSubview(hint)
+
+        // W × H badge — same dark-pill look as the hint, follows the
+        // selection's top edge while dragging (flips inside near the
+        // screen top). A plain text field: no NSStringDrawing in draw().
+        badge.font = BTFont.mono(10, weight: .medium)
+        badge.textColor = .white
+        badge.isBezeled = false
+        badge.drawsBackground = true
+        badge.backgroundColor = NSColor.black.withAlphaComponent(0.75)
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 3
+        badge.alignment = .center
+        badge.isHidden = true
+        addSubview(badge)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -108,6 +123,7 @@ private final class SelectionView: NSView {
             width: abs(p.x - s.x),
             height: abs(p.y - s.y)
         )
+        layoutBadge()
         needsDisplay = true
     }
 
@@ -115,6 +131,7 @@ private final class SelectionView: NSView {
         guard current.width > 4, current.height > 4 else {
             start = nil
             current = .zero
+            badge.isHidden = true
             needsDisplay = true
             return
         }
@@ -137,29 +154,28 @@ private final class SelectionView: NSView {
         let path = NSBezierPath(rect: current.insetBy(dx: 0.75, dy: 0.75))
         path.lineWidth = 1.5
         path.stroke()
+    }
 
-        let label = "\(Int(current.width)) × \(Int(current.height))"
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: BTFont.mono(10, weight: .medium),
-            .foregroundColor: NSColor.white,
-        ]
-        let textSize = (label as NSString).size(withAttributes: attrs)
-        let pad: CGFloat = 5
-        var badge = NSRect(
-            x: current.minX,
-            y: current.maxY + 5,
-            width: textSize.width + pad * 2,
-            height: textSize.height + pad
-        )
-        if badge.maxY > bounds.maxY - 4 {
-            badge.origin.y = current.maxY - badge.height - 5 // flip inside
+    /// Keep the badge text/position in sync with the dragged rect —
+    /// pinned just above the top edge, flipping inside when the edge
+    /// hugs the top of the screen.
+    private func layoutBadge() {
+        guard current != .zero else {
+            badge.isHidden = true
+            return
         }
-        NSColor.black.withAlphaComponent(0.75).setFill()
-        NSBezierPath(roundedRect: badge, xRadius: 3, yRadius: 3).fill()
-        (label as NSString).draw(
-            at: NSPoint(
-                x: badge.minX + pad,
-                y: badge.minY + (badge.height - textSize.height) / 2),
-            withAttributes: attrs)
+        badge.stringValue =
+            "\(Int(current.width)) × \(Int(current.height))"
+        badge.sizeToFit()
+        let pad: CGFloat = 5
+        var f = badge.frame
+        f.size.width += pad * 2
+        f.size.height += 4
+        f.origin = NSPoint(x: current.minX, y: current.maxY + 5)
+        if f.maxY > bounds.maxY - 4 {
+            f.origin.y = current.maxY - f.height - 5 // flip inside
+        }
+        badge.frame = f
+        badge.isHidden = false
     }
 }
