@@ -336,17 +336,23 @@ private struct ProviderPane: View {
     @State private var customModel = false
 
     private let providerTypes = [
-        "gemini", "openai", "openrouter", "groq", "ollama", "custom"
+        "gemini", "openai", "openrouter", "groq", "claude", "ollama", "custom"
     ]
     private static let customValue = "__custom__"
 
     private var usesBaseURL: Bool {
-        settings.providerType != "gemini" && settings.providerType != "ollama"
+        !["gemini", "claude", "ollama"].contains(settings.providerType)
     }
 
     private var keySubtitle: String {
-        settings.providerType == "ollama"
-            ? "Optional for local Ollama" : "Stored locally in UserDefaults"
+        switch settings.providerType {
+        case "ollama":
+            return "Optional for local Ollama"
+        case "claude":
+            return "console.anthropic.com/settings/keys"
+        default:
+            return "Stored locally in UserDefaults"
+        }
     }
 
     var body: some View {
@@ -535,6 +541,7 @@ private struct ProviderPane: View {
         switch id {
         case "openrouter": return "OpenRouter"
         case "groq": return "Groq"
+        case "claude": return "Claude (Anthropic)"
         case "openai": return "OpenAI"
         case "ollama": return "Ollama"
         case "gemini": return "Gemini"

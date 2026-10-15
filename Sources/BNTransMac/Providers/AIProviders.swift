@@ -54,6 +54,15 @@ func translateImage(
             targetLang: targetLang,
             mode: mode
         )
+    case "claude":
+        return try await claudeImageTranslate(
+            apiKey: settings.apiKey,
+            model: settings.effectiveModel,
+            base64: imageBase64,
+            mimeType: mimeType,
+            targetLang: targetLang,
+            mode: mode
+        )
     default:
         return try await openAIImageTranslate(
             baseUrl: settings.effectiveBaseUrl,
@@ -163,6 +172,66 @@ private func openAIImageTranslate(
         (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["choices"] as? [[String: Any]]
     let text =
         ((choices?.first?["message"] as? [String: Any])?["content"] as? String ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return mode == .explain
+        ? ImageResult(source: "", translation: text, segments: [])
+        : parseImageTranslation(text)
+}
+
+// MARK: - Claude (Anthropic Messages API)
+
+private func claudeImageTranslate(
+    apiKey: String,
+    model: String,
+    base64: String,
+    mimeType: String,
+    targetLang: String,
+    mode: ImageMode
+) async throws -> ImageResult {
+    guard !apiKey.isEmpty else { throw ProviderError.missingKey }
+    let prompt =
+        mode == .explain
+        ? imageExplainPrompt(targetLang: targetLang)
+        : imageOCRPrompt(targetLang: targetLang)
+
+    var req = URLRequest(
+        url: URL(string: "https://api.anthropic.com/v1/messages")!
+    )
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+    req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    req.httpBody = try JSONSerialization.data(withJSONObject: [
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [
+            [
+                "role": "user",
+                "content": [
+                    ["type": "text", "text": prompt],
+                    [
+                        "type": "image",
+                        "source": [
+                            "type": "base64",
+                            "media_type": mimeType,
+                            "data": base64,
+                        ],
+                    ],
+                ],
+            ]
+        ],
+    ])
+
+    let (data, resp) = try await URLSession.shared.data(for: req)
+    if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+        throw httpError(http.statusCode, data, model: model)
+    }
+    let blocks =
+        (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["content"] as? [[String: Any]]
+    let text = (blocks ?? [])
+        .filter { $0["type"] as? String == "text" }
+        .compactMap { $0["text"] as? String }
+        .joined()
         .trimmingCharacters(in: .whitespacesAndNewlines)
     return mode == .explain
         ? ImageResult(source: "", translation: text, segments: [])

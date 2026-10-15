@@ -3,7 +3,7 @@ import Foundation
 /// UserDefaults-backed settings — same shape as the extension's provider
 /// config so users can reuse the same keys/models.
 struct Settings: Equatable {
-    var providerType: String = "gemini" // gemini | openai | openrouter | groq | ollama | custom
+    var providerType: String = "gemini" // gemini | openai | openrouter | groq | claude | ollama | custom
     var apiKey: String = ""
     var baseUrl: String = ""
     var model: String = "" // empty = provider default
@@ -60,6 +60,7 @@ struct Settings: Equatable {
         case "openai": return "gpt-4o-mini"
         case "openrouter": return "openai/gpt-4o-mini"
         case "groq": return "qwen/qwen3.8-27b" // only Groq vision model left
+        case "claude": return "claude-haiku-5-5"
         case "ollama": return "llava"
         default: return model
         }

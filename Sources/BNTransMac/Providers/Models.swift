@@ -17,11 +17,15 @@ enum ModelsFetcher {
         "openrouter": ["google/gemini-3.1-flash-lite", "openai/gpt-4o-mini",
                        "google/gemini-2.5-flash"],
         "groq": ["qwen/qwen3.8-27b"],
+        "claude": ["claude-haiku-5-5", "claude-sonnet-5-5"],
     ]
 
     static func fetch(settings: Settings) async throws -> [String] {
         if settings.providerType == "gemini" {
             return try await fetchGemini(apiKey: settings.apiKey)
+        }
+        if settings.providerType == "claude" {
+            return try await fetchClaude(apiKey: settings.apiKey)
         }
         return try await fetchOpenAICompatible(settings: settings)
     }
@@ -58,6 +62,30 @@ enum ModelsFetcher {
                 $0.firstMatch(of: /^(gemini|gemma)/) != nil
                     && $0.firstMatch(of: junk) == nil
             }
+    }
+
+    /// Anthropic `/v1/models` — same call as the extension minus the
+    /// browser-access header (native app, no CORS). Every claude-* model
+    /// is chat + vision capable, so the list needs no filter.
+    private static func fetchClaude(apiKey: String) async throws -> [String] {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            throw FetchError(message: "Enter an API key first")
+        }
+        var req = URLRequest(
+            url: URL(
+                string: "https://api.anthropic.com/v1/models?limit=100")!
+        )
+        req.setValue(key, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try ensureOK(resp, data)
+        struct R: Decodable {
+            struct M: Decodable { let id: String }
+            let data: [M]?
+        }
+        return (try JSONDecoder().decode(R.self, from: data).data ?? [])
+            .map(\.id)
     }
 
     private static func fetchOpenAICompatible(settings: Settings) async throws
