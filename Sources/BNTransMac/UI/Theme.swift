@@ -127,10 +127,10 @@ enum BTFont {
     {
         let name: String
         switch weight {
-        case .medium: name = "IBMPlexSans-Medium"
-        case .semibold: name = "IBMPlexSans-SemiBold"
+        case .medium: name = "IBMPlexSans-Medm"
+        case .semibold: name = "IBMPlexSans-SmBld"
         case .bold: name = "IBMPlexSans-Bold"
-        default: name = "IBMPlexSans-Regular"
+        default: name = "IBMPlexSans"
         }
         return NSFont(name: name, size: size)
             ?? .systemFont(ofSize: size, weight: weight)
@@ -141,8 +141,8 @@ enum BTFont {
     {
         let name =
             weight == .medium
-            ? "IBMPlexMono-Medium"
-            : weight == .semibold ? "IBMPlexMono-SemiBold" : "IBMPlexMono-Regular"
+            ? "IBMPlexMono-Medm"
+            : weight == .semibold ? "IBMPlexMono-SmBld" : "IBMPlexMono"
         return NSFont(name: name, size: size) ?? .monospacedSystemFont(
             ofSize: size, weight: weight)
     }
