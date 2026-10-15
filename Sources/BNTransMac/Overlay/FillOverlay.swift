@@ -19,6 +19,15 @@ import AppKit
         self.regionRect = rect
         self.onMode = onMode
 
+        NSLog(
+            "[BTFill] mode=%@ segments=%d translationLen=%d first=%@",
+            "\(mode)", result.segments.count, result.translation.count,
+            String(result.translation.prefix(80)))
+        // nothing recognised and nothing translated — an empty box over
+        // the whole region is the "black slab" bug, so bail out entirely
+        guard !result.segments.isEmpty || !result.translation.isEmpty
+        else { return }
+
         let barH: CGFloat = 28
         // icon toolbar pinned under the region's bottom edge (the classic
         // screen-translate look); flips above the top edge when the region
@@ -98,6 +107,12 @@ import AppKit
             stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor)
         ])
+        // compact pill hugging the icon row — a full-width strip reads as
+        // a heavy bar instead of a floating tool cluster
+        bar.frame.size.width = stack.arrangedSubviews.reduce(0) {
+            $0 + $1.frame.width
+        } + stack.spacing * CGFloat(stack.arrangedSubviews.count - 1)
+            + stack.edgeInsets.left + stack.edgeInsets.right
         root.addSubview(bar)
 
         // window = region + barH band; with the bar below, the band hangs
@@ -112,11 +127,23 @@ import AppKit
             display: false
         )
 
+        // thin veil over the whole captured region — gaps between
+        // segment plates show this tint instead of the raw page
+        let veil = NSView(
+            frame: CGRect(
+                x: 0, y: segYOffset, width: rect.width, height: rect.height))
+        veil.wantsLayer = true
+        veil.layer?.backgroundColor = (
+            image.flatMap {
+                averageColor(
+                    of: $0,
+                    box: Segment(
+                        box: [0, 0, 1000, 1000], source: "", translation: ""))
+            } ?? NSColor(BTTheme.background)
+        ).withAlphaComponent(0.85).cgColor
+        root.addSubview(veil)
+
         // segments — opaque boxes covering the original text
-        NSLog(
-            "[BTFill] mode=%@ segments=%d translationLen=%d first=%@",
-            "\(mode)", result.segments.count, result.translation.count,
-            String(result.translation.prefix(80)))
         let segs = result.segments.isEmpty
             ? [Segment(box: [0, 0, 1000, 1000], source: "", translation: result.translation)]
             : result.segments
@@ -153,11 +180,20 @@ import AppKit
             width: max(1, (xMax - xMin) * size.width),
             height: max(1, (yMax - yMin) * size.height)
         )
-        // overhang so the original text edges cannot peek out — clamped to
-        // the region band so segments never dip into the toolbar strip
-        f = f.insetBy(dx: -6, dy: -4)
-            .intersection(
-                CGRect(x: 0, y: yOffset, width: size.width, height: size.height))
+        // Vision boxes run tighter than the true glyphs — worst on the
+        // right edge (LTR bias), where trailing characters peek out.
+        // Grow proportionally to the box, biased right, and clamp to the
+        // region band so segments never dip into the toolbar strip.
+        let growL = max(6, f.width * 0.08)
+        let growR = max(10, f.width * 0.14)
+        let growV = max(4, f.height * 0.10)
+        f = CGRect(
+            x: f.minX - growL,
+            y: f.minY - growV,
+            width: f.width + growL + growR,
+            height: f.height + growV * 2
+        ).intersection(
+            CGRect(x: 0, y: yOffset, width: size.width, height: size.height))
 
         let fill = image.flatMap { averageColor(of: $0, box: s) }
             ?? NSColor(BTTheme.background)
@@ -169,7 +205,9 @@ import AppKit
         v.frame = f
         v.isBezeled = false
         v.drawsBackground = true
-        v.backgroundColor = fill
+        // thin translucent wash — the capture ghosts through slightly
+        // instead of an opaque slab
+        v.backgroundColor = fill.withAlphaComponent(0.85)
         v.textColor = lum > 0.6
             ? NSColor(srgbRed: 0.086, green: 0.082, blue: 0.059, alpha: 1) // ink
             : NSColor(srgbRed: 0.949, green: 0.941, blue: 0.910, alpha: 1) // paper
@@ -199,7 +237,9 @@ import AppKit
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
-        ctx.interpolationQuality = .low
+        // .high averages the crop — .low/.none nearest-sample a single
+        // source pixel, so a lone white glyph paints the whole box white
+        ctx.interpolationQuality = .high
         ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         return NSColor(
             srgbRed: CGFloat(pixel[0]) / 255,
