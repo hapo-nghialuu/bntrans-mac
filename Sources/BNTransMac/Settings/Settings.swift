@@ -14,6 +14,10 @@ struct Settings: Equatable {
     /// shiftKey 0x200, optionKey 0x800, controlKey 0x1000). Default ⇧⌘S.
     var hotkeyKeyCode: Int = 1 // kVK_ANSI_S
     var hotkeyModifiers: Int = 768 // cmdKey | shiftKey
+    /// Text-translate hotkey (selection → clipboard). Default ⇧⌘T.
+    var hotkeyKeyCode2: Int = 17 // kVK_ANSI_T
+    var hotkeyModifiers2: Int = 768 // cmdKey | shiftKey
+    var launchAtLogin: Bool = false
 
     private static let key = "bntrans.settings"
 
@@ -30,7 +34,10 @@ struct Settings: Equatable {
             fillEnabled: d["fillEnabled"] as? Bool ?? true,
             appearance: d["appearance"] as? String ?? "auto",
             hotkeyKeyCode: d["hotkeyKeyCode"] as? Int ?? 1,
-            hotkeyModifiers: d["hotkeyModifiers"] as? Int ?? 768
+            hotkeyModifiers: d["hotkeyModifiers"] as? Int ?? 768,
+            hotkeyKeyCode2: d["hotkeyKeyCode2"] as? Int ?? 17,
+            hotkeyModifiers2: d["hotkeyModifiers2"] as? Int ?? 768,
+            launchAtLogin: d["launchAtLogin"] as? Bool ?? false
         )
     }
 
@@ -45,7 +52,10 @@ struct Settings: Equatable {
                 "fillEnabled": fillEnabled,
                 "appearance": appearance,
                 "hotkeyKeyCode": hotkeyKeyCode,
-                "hotkeyModifiers": hotkeyModifiers
+                "hotkeyModifiers": hotkeyModifiers,
+                "hotkeyKeyCode2": hotkeyKeyCode2,
+                "hotkeyModifiers2": hotkeyModifiers2,
+                "launchAtLogin": launchAtLogin
             ],
             forKey: Settings.key
         )
