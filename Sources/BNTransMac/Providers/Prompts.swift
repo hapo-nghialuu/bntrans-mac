@@ -19,3 +19,13 @@ func imageExplainPrompt(targetLang: String) -> String {
     Reply with plain text only — 1-3 short paragraphs, no markdown.
     """
 }
+
+/// System prompt for the text-translate path (selection → panel) — mirrors
+/// buildSystemPrompt() in extension/src/services/prompt.js.
+func textTranslatePrompt(targetLang: String) -> String {
+    """
+    You are a translation engine. Translate the user's text into \(targetLang).
+    Reply with ONLY the translation — no explanations, no quotes, no extra text.
+    Keep the original formatting (line breaks, lists).
+    """
+}
