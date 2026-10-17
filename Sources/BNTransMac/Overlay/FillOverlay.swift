@@ -199,6 +199,22 @@ import AppKit
             ?? NSColor(BTTheme.background)
         let lum = Self.luminance(of: fill)
 
+        let font = fitFont(text: s.translation, in: f.size)
+        // let the box grow downward when even the 9pt floor still wraps
+        // past it — translations run longer than the detected glyphs
+        let need = (s.translation as NSString).boundingRect(
+            with: CGSize(
+                width: f.width - 4, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            attributes: [.font: font]
+        ).size
+        if need.height + 2 > f.height {
+            let bottom = max(yOffset, f.maxY - (need.height + 2))
+            f = CGRect(
+                x: f.minX, y: bottom,
+                width: f.width, height: f.maxY - bottom)
+        }
+
         let v = NSTextField(
             wrappingLabelWithString: s.translation
         )
@@ -212,7 +228,7 @@ import AppKit
             ? NSColor(srgbRed: 0.086, green: 0.082, blue: 0.059, alpha: 1) // ink
             : NSColor(srgbRed: 0.949, green: 0.941, blue: 0.910, alpha: 1) // paper
         v.alignment = .center
-        v.font = fitFont(text: s.translation, in: f.size)
+        v.font = font
         v.wantsLayer = true
         v.layer?.cornerRadius = 3
         return v
