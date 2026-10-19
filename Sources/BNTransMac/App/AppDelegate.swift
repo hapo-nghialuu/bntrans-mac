@@ -199,7 +199,7 @@ import SwiftUI
         InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, _ -> OSStatus in
-                guard let event else { return eventNotHandledErr }
+                guard let event else { return OSStatus(eventNotHandledErr) }
                 var hotKeyID = EventHotKeyID()
                 guard GetEventParameter(
                     event,
@@ -212,7 +212,7 @@ import SwiftUI
                 ) == noErr,
                     hotKeyID.signature == OSType(0x4254),
                     hotKeyID.id == 1 || hotKeyID.id == 2
-                else { return eventNotHandledErr }
+                else { return OSStatus(eventNotHandledErr) }
                 Task { @MainActor in
                     let app = NSApp.delegate as? AppDelegate
                     if hotKeyID.id == 2 {
