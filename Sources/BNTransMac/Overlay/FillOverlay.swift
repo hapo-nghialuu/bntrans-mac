@@ -198,7 +198,7 @@ import AppKit
         textView.isVerticallyResizable = true
         textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
         textView.maxSize = NSSize(
-            width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
         textView.string = text
         scroll.documentView = textView
