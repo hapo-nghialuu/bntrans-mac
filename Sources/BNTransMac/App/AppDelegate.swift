@@ -484,6 +484,7 @@ import SwiftUI
                 defer: false
             )
             win.title = "BNTrans"
+            win.isReleasedWhenClosed = false
             win.minSize = NSSize(width: 720, height: 560)
             win.contentView = NSHostingView(rootView: SettingsView())
             win.center()
