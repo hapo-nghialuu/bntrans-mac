@@ -198,19 +198,21 @@ import SwiftUI
         )
         InstallEventHandler(
             GetApplicationEventTarget(),
-            { event, _, _ -> OSStatus in
+            { _, event, _ -> OSStatus in
+                guard let event else { return eventNotHandledErr }
                 var hotKeyID = EventHotKeyID()
-                if let event {
-                    GetEventParameter(
-                        event,
-                        EventParamName(kEventParamDirectObject),
-                        EventParamType(typeEventHotKeyID),
-                        nil,
-                        MemoryLayout<EventHotKeyID>.size,
-                        nil,
-                        &hotKeyID
-                    )
-                }
+                guard GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                ) == noErr,
+                    hotKeyID.signature == OSType(0x4254),
+                    hotKeyID.id == 1 || hotKeyID.id == 2
+                else { return eventNotHandledErr }
                 Task { @MainActor in
                     let app = NSApp.delegate as? AppDelegate
                     if hotKeyID.id == 2 {
