@@ -436,7 +436,17 @@ import SwiftUI
             kAXSelectedTextAttribute as CFString,
             &selectedValue
         ) == .success else { return nil }
-        return selectedValue as? String
+        let selected: String?
+        if let string = selectedValue as? String {
+            selected = string
+        } else if let attributed = selectedValue as? NSAttributedString {
+            selected = attributed.string
+        } else {
+            selected = nil
+        }
+        guard let text = selected?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        return text
     }
 
     private func runTextTranslation(source: String, generation: Int) async {
