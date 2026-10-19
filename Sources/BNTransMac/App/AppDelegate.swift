@@ -1,17 +1,22 @@
 import AppKit
+import ApplicationServices
 import Carbon
 import SwiftUI
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyRef2: EventHotKeyRef?
     private var hotKeyHandlerInstalled = false
     private let overlay = FillOverlay()
+    private let textPanel = TextResultPanel()
     private var lastCropped: CGImage?
     private var captureGeneration = 0
+    private var textGeneration = 0
     private var isSelectingRegion = false
     private var settingsWindow: NSWindow?
     private var captureMenuItem: NSMenuItem?
+    private var textMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         BTFont.registerBundledFonts()
@@ -39,7 +44,13 @@ import SwiftUI
             keyEquivalent: ""
         )
         menu.addItem(captureMenuItem!)
-        updateCaptureMenuTitle()
+        textMenuItem = NSMenuItem(
+            title: "Translate Text",
+            action: #selector(textTranslateClicked),
+            keyEquivalent: ""
+        )
+        menu.addItem(textMenuItem!)
+        updateMenuTitles()
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Settings…",
@@ -60,9 +71,10 @@ import SwiftUI
         // paste/select-all in every field.
         installMainMenu()
 
-        registerHotKey()
+        registerHotKeys()
         let s = Settings.load()
         lastHotkey = (s.hotkeyKeyCode, s.hotkeyModifiers)
+        lastTextHotkey = (s.hotkeyKeyCode2, s.hotkeyModifiers2)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(settingsChanged),
@@ -72,17 +84,22 @@ import SwiftUI
     }
 
     /// Auto-save fires on every settings field edit — only re-register the
-    /// Carbon hotkey when the actual combo changed, not on each keystroke.
+    /// Carbon hotkeys when an actual combo changed, not on each keystroke.
     private var lastHotkey: (key: Int, mods: Int)?
+    private var lastTextHotkey: (key: Int, mods: Int)?
 
     @objc private func settingsChanged() {
         let s = Settings.load()
         AppAppearance.apply(s.appearance)
         let combo = (s.hotkeyKeyCode, s.hotkeyModifiers)
-        if lastHotkey?.key != combo.0 || lastHotkey?.mods != combo.1 {
+        let combo2 = (s.hotkeyKeyCode2, s.hotkeyModifiers2)
+        if lastHotkey?.key != combo.0 || lastHotkey?.mods != combo.1
+            || lastTextHotkey?.key != combo2.0 || lastTextHotkey?.mods != combo2.1
+        {
             lastHotkey = combo
-            registerHotKey()
-            updateCaptureMenuTitle()
+            lastTextHotkey = combo2
+            registerHotKeys()
+            updateMenuTitles()
         }
     }
 
@@ -112,38 +129,56 @@ import SwiftUI
         NSApp.mainMenu = mainMenu
     }
 
-    private func updateCaptureMenuTitle() {
+    private func updateMenuTitles() {
         let s = Settings.load()
+        captureMenuItem?.title =
+            "Capture Area  \(shortcutLabel(keyCode: s.hotkeyKeyCode, modifiers: s.hotkeyModifiers))"
+        textMenuItem?.title =
+            "Translate Text  \(shortcutLabel(keyCode: s.hotkeyKeyCode2, modifiers: s.hotkeyModifiers2))"
+    }
+
+    private func shortcutLabel(keyCode: Int, modifiers: Int) -> String {
         var mods = ""
-        let m = UInt32(s.hotkeyModifiers)
+        let m = UInt32(modifiers)
         if m & UInt32(controlKey) != 0 { mods += "⌃" }
         if m & UInt32(optionKey) != 0 { mods += "⌥" }
         if m & UInt32(shiftKey) != 0 { mods += "⇧" }
         if m & UInt32(cmdKey) != 0 { mods += "⌘" }
-        captureMenuItem?.title =
-            "Capture Area  \(mods)\(keyName(for: UInt16(s.hotkeyKeyCode)))"
+        return mods + keyName(for: UInt16(keyCode))
     }
 
-    // Global hotkey via Carbon RegisterEventHotKey — works without
-    // accessibility permissions. KeyCode + modifiers come from Settings so
-    // the user can rebind it in General → Shortcut.
-    private func registerHotKey() {
+    // Global hotkeys via Carbon RegisterEventHotKey — the hotkey listener
+    // itself does not need Accessibility. Reading another app's selection
+    // later does, so the text path falls back to the clipboard.
+    private func registerHotKeys() {
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
         }
+        if let ref = hotKeyRef2 {
+            UnregisterEventHotKey(ref)
+            hotKeyRef2 = nil
+        }
         let settings = Settings.load()
-        let spec = EventHotKeyID(signature: OSType(0x4254), id: 1)
-        var ref: EventHotKeyRef?
-        RegisterEventHotKey(
-            UInt32(settings.hotkeyKeyCode),
-            UInt32(settings.hotkeyModifiers),
-            spec,
-            GetApplicationEventTarget(),
-            0,
-            &ref
-        )
-        hotKeyRef = ref
+        func register(_ id: UInt32, keyCode: Int, modifiers: Int) -> EventHotKeyRef? {
+            let spec = EventHotKeyID(signature: OSType(0x4254), id: id)
+            var ref: EventHotKeyRef?
+            RegisterEventHotKey(
+                UInt32(keyCode),
+                UInt32(modifiers),
+                spec,
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            return ref
+        }
+        hotKeyRef = register(
+            1, keyCode: settings.hotkeyKeyCode,
+            modifiers: settings.hotkeyModifiers)
+        hotKeyRef2 = register(
+            2, keyCode: settings.hotkeyKeyCode2,
+            modifiers: settings.hotkeyModifiers2)
 
         // Install the pressed-event handler once — re-registering the hotkey
         // must not stack handlers or every press would fire N times.
@@ -155,9 +190,26 @@ import SwiftUI
         )
         InstallEventHandler(
             GetApplicationEventTarget(),
-            { _, _, _ -> OSStatus in
+            { event, _, _ -> OSStatus in
+                var hotKeyID = EventHotKeyID()
+                if let event {
+                    GetEventParameter(
+                        event,
+                        EventParamName(kEventParamDirectObject),
+                        EventParamType(typeEventHotKeyID),
+                        nil,
+                        MemoryLayout<EventHotKeyID>.size,
+                        nil,
+                        &hotKeyID
+                    )
+                }
                 Task { @MainActor in
-                    (NSApp.delegate as? AppDelegate)?.captureClicked()
+                    let app = NSApp.delegate as? AppDelegate
+                    if hotKeyID.id == 2 {
+                        app?.textTranslateClicked()
+                    } else {
+                        app?.captureClicked()
+                    }
                 }
                 return noErr
             },
@@ -172,8 +224,10 @@ import SwiftUI
         guard !isSelectingRegion else { return }
         isSelectingRegion = true
         captureGeneration += 1
+        textGeneration += 1
         let generation = captureGeneration
         overlay.close()
+        textPanel.close()
         RegionSelector.select { [weak self] rect in
             guard let self else { return }
             self.isSelectingRegion = false
@@ -185,7 +239,9 @@ import SwiftUI
 
     private func rerun(rect: CGRect, mode: ImageMode, recapture: Bool) {
         captureGeneration += 1
+        textGeneration += 1
         overlay.close()
+        textPanel.close()
         if recapture {
             lastCropped = nil
         }
@@ -336,6 +392,67 @@ import SwiftUI
             if let found = findView(identified: id, in: sub) { return found }
         }
         return nil
+    }
+
+    @objc private func textTranslateClicked() {
+        guard !isSelectingRegion else { return }
+        captureGeneration += 1
+        overlay.close()
+        textPanel.close()
+        textGeneration += 1
+        let generation = textGeneration
+        let source = (selectedText() ?? NSPasteboard.general.string(forType: .string) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else {
+            NSAlert.error(with: "Select text or copy text to the clipboard first.").runModal()
+            return
+        }
+        textPanel.showLoading(source: source) { [weak self] in
+            self?.textGeneration += 1
+        }
+        Task { await runTextTranslation(source: source, generation: generation) }
+    }
+
+    /// Prefer the focused app's AX selection. If Accessibility is missing or
+    /// the target exposes no selected text, fall back to whatever string is
+    /// already on the clipboard — never synthesize ⌘C, which would both need
+    /// permission and clobber the user's pasteboard.
+    private func selectedText() -> String? {
+        let options = [
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
+        ] as CFDictionary
+        guard AXIsProcessTrustedWithOptions(options) else { return nil }
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElement as CFString,
+            &focusedValue
+        ) == .success, let focusedValue else { return nil }
+        let focused = focusedValue as! AXUIElement
+        var selectedValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            focused,
+            kAXSelectedTextAttribute as CFString,
+            &selectedValue
+        ) == .success else { return nil }
+        return selectedValue as? String
+    }
+
+    private func runTextTranslation(source: String, generation: Int) async {
+        guard generation == textGeneration else { return }
+        do {
+            let result = try await translateText(
+                settings: Settings.load(), text: source)
+            guard generation == textGeneration else { return }
+            textPanel.show(source: source, translation: result) { [weak self] in
+                self?.textGeneration += 1
+            }
+        } catch {
+            guard generation == textGeneration else { return }
+            textPanel.close()
+            NSAlert.error(with: error.localizedDescription).runModal()
+        }
     }
 
     @objc private func openSettings() {

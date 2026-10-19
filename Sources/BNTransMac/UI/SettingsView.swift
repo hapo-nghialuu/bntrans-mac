@@ -317,6 +317,16 @@ private struct GeneralPane: View {
                         modifiers: $settings.hotkeyModifiers
                     )
                 }
+
+                SettingsLabeledRow(
+                    title: "Translate text",
+                    subtitle: "Translate the current selection, or the clipboard as a fallback"
+                ) {
+                    HotkeyRecorder(
+                        keyCode: $settings.hotkeyKeyCode2,
+                        modifiers: $settings.hotkeyModifiers2
+                    )
+                }
             }
         }
     }
