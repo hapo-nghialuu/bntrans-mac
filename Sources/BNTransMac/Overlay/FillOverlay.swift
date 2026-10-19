@@ -70,10 +70,9 @@ import AppKit
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let screen = NSScreen.screens.first(where: { $0.frame.contains(center) })
             ?? NSScreen.screens.first(where: { $0.frame.intersects(rect) })
-        let bounds = screen?.frame ?? rect.insetBy(dx: -300, dy: -300)
+        let bounds = screen?.visibleFrame ?? rect.insetBy(dx: -300, dy: -300)
         let width = min(max(max(rect.width, barW), mode == .explain ? 260 : 0), bounds.width)
-        let winX = min(max(rect.minX, bounds.minX), bounds.maxX - width)
-        let regionX = rect.minX - winX
+        let extrasX = min(max(rect.minX, bounds.minX), bounds.maxX - width)
 
         let text = result.translation as NSString
         let textWidth = max(1, width - 44)
@@ -91,19 +90,25 @@ import AppKit
         let space = barBelow ? belowSpace : aboveSpace
         let availableCardH = mode == .explain
             ? min(desiredCardH, max(0, space - barH)) : 0
-        let cardInside = mode == .explain && availableCardH < 100 && rect.height >= 160
+        let usableRegion = rect.intersection(bounds)
+        let cardInside = mode == .explain && availableCardH < 100 && usableRegion.height >= 160
         let cardH = cardInside
-            ? min(desiredCardH, rect.height - barH) : availableCardH
+            ? min(desiredCardH, usableRegion.height - barH) : availableCardH
         let barInside = cardInside
             || (mode == .translate && max(belowSpace, aboveSpace) < barH
-                && rect.height >= barH)
-        let extrasH = barInside ? 0 : barH + cardH
-        let regionY = barBelow ? extrasH : 0
+                && usableRegion.height >= barH)
+        let extrasH = barH + cardH
+        let preferredY = barInside ? usableRegion.minY
+            : (barBelow ? rect.minY - extrasH : rect.maxY)
+        let extrasY = min(max(preferredY, bounds.minY), bounds.maxY - extrasH)
+        let extrasFrame = CGRect(x: extrasX, y: extrasY, width: width, height: extrasH)
+        let windowFrame = rect.union(extrasFrame)
+        let regionX = rect.minX - windowFrame.minX
+        let regionY = rect.minY - windowFrame.minY
+        let extrasOffset = CGPoint(
+            x: extrasX - windowFrame.minX, y: extrasY - windowFrame.minY)
         let win = NSWindow(
-            contentRect: CGRect(
-                x: winX, y: barBelow && !barInside ? rect.minY - extrasH : rect.minY,
-                width: width, height: rect.height + extrasH
-            ),
+            contentRect: windowFrame,
             styleMask: [.borderless], backing: .buffered, defer: false
         )
         win.isOpaque = false
@@ -136,13 +141,14 @@ import AppKit
         } else if cardH > 0 {
             root.addSubview(explainCard(
                 text: result.translation,
-                frame: CGRect(x: 0, y: barBelow || cardInside ? 0 : rect.height + barH,
+                frame: CGRect(x: extrasOffset.x,
+                              y: extrasOffset.y + (barBelow || cardInside ? 0 : barH),
                               width: width, height: cardH)))
         }
 
         let bar = NSView(frame: CGRect(
-            x: min(max(regionX, 0), max(0, width - barW)),
-            y: barBelow || barInside ? cardH : rect.height,
+            x: extrasOffset.x,
+            y: extrasOffset.y + (barBelow || barInside ? cardH : 0),
             width: barW, height: barH))
         bar.wantsLayer = true
         bar.layer?.backgroundColor = NSColor(BTTheme.background)
