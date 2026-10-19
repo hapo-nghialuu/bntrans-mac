@@ -135,6 +135,12 @@ import SwiftUI
             "Capture Area  \(shortcutLabel(keyCode: s.hotkeyKeyCode, modifiers: s.hotkeyModifiers))"
         textMenuItem?.title =
             "Translate Text  \(shortcutLabel(keyCode: s.hotkeyKeyCode2, modifiers: s.hotkeyModifiers2))"
+            + (shortcutsConflict(s) ? " — conflicts with Capture" : "")
+    }
+
+    private func shortcutsConflict(_ settings: Settings) -> Bool {
+        settings.hotkeyKeyCode == settings.hotkeyKeyCode2
+            && settings.hotkeyModifiers == settings.hotkeyModifiers2
     }
 
     private func shortcutLabel(keyCode: Int, modifiers: Int) -> String {
@@ -176,9 +182,11 @@ import SwiftUI
         hotKeyRef = register(
             1, keyCode: settings.hotkeyKeyCode,
             modifiers: settings.hotkeyModifiers)
-        hotKeyRef2 = register(
-            2, keyCode: settings.hotkeyKeyCode2,
-            modifiers: settings.hotkeyModifiers2)
+        if !shortcutsConflict(settings) {
+            hotKeyRef2 = register(
+                2, keyCode: settings.hotkeyKeyCode2,
+                modifiers: settings.hotkeyModifiers2)
+        }
 
         // Install the pressed-event handler once — re-registering the hotkey
         // must not stack handlers or every press would fire N times.
@@ -207,6 +215,8 @@ import SwiftUI
                     let app = NSApp.delegate as? AppDelegate
                     if hotKeyID.id == 2 {
                         app?.textTranslateClicked()
+                    } else if app?.conflictingHotkeys() == true {
+                        app?.showHotkeyConflict()
                     } else {
                         app?.captureClicked()
                     }
@@ -392,6 +402,16 @@ import SwiftUI
             if let found = findView(identified: id, in: sub) { return found }
         }
         return nil
+    }
+
+    private func conflictingHotkeys() -> Bool {
+        shortcutsConflict(Settings.load())
+    }
+
+    private func showHotkeyConflict() {
+        NSAlert.error(
+            with: "Capture and text shortcuts must be different. Change one in Settings → General → Shortcut."
+        ).runModal()
     }
 
     @objc private func textTranslateClicked() {
