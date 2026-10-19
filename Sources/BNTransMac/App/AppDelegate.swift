@@ -9,6 +9,7 @@ import SwiftUI
     private let overlay = FillOverlay()
     private var lastCropped: CGImage?
     private var captureGeneration = 0
+    private var isSelectingRegion = false
     private var settingsWindow: NSWindow?
     private var captureMenuItem: NSMenuItem?
 
@@ -168,11 +169,15 @@ import SwiftUI
     }
 
     @objc private func captureClicked() {
+        guard !isSelectingRegion else { return }
+        isSelectingRegion = true
         captureGeneration += 1
         let generation = captureGeneration
         overlay.close()
         RegionSelector.select { [weak self] rect in
-            guard let self, let rect, self.captureGeneration == generation else { return }
+            guard let self else { return }
+            self.isSelectingRegion = false
+            guard let rect, self.captureGeneration == generation else { return }
             self.lastCropped = nil
             Task { await self.run(rect: rect, mode: .translate, generation: generation) }
         }
@@ -189,6 +194,7 @@ import SwiftUI
     }
 
     private func run(rect: CGRect, mode: ImageMode, generation: Int) async {
+        guard generation == captureGeneration else { return }
         let settings = Settings.load()
         do {
             let cropped: CGImage
