@@ -215,8 +215,6 @@ import SwiftUI
                     let app = NSApp.delegate as? AppDelegate
                     if hotKeyID.id == 2 {
                         app?.textTranslateClicked()
-                    } else if app?.conflictingHotkeys() == true {
-                        app?.showHotkeyConflict()
                     } else {
                         app?.captureClicked()
                     }
@@ -402,16 +400,6 @@ import SwiftUI
             if let found = findView(identified: id, in: sub) { return found }
         }
         return nil
-    }
-
-    private func conflictingHotkeys() -> Bool {
-        shortcutsConflict(Settings.load())
-    }
-
-    private func showHotkeyConflict() {
-        NSAlert.error(
-            with: "Capture and text shortcuts must be different. Change one in Settings → General → Shortcut."
-        ).runModal()
     }
 
     @objc private func textTranslateClicked() {
