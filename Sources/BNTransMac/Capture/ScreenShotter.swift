@@ -27,6 +27,9 @@ func captureRegion(_ rect: CGRect) async throws -> CGImage {
 
     let filter = SCContentFilter(display: display, excludingWindows: [])
     let cfg = SCStreamConfiguration()
+    // The default 1920x1080 output can letterbox displays with another aspect ratio.
+    cfg.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
+    cfg.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
     cfg.showsCursor = false
     let image = try await SCScreenshotManager.captureImage(
         contentFilter: filter,
