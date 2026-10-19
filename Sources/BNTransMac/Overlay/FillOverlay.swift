@@ -1,11 +1,10 @@
 import AppKit
 
-/// Borderless window painted over the captured region — same idea as the
-/// extension's .bt-shot-fill: a pill toolbar (Translate / Explain / ×)
-/// plus opaque per-segment boxes covering the original text.
+/// Borderless window painted over the captured region, with a floating
+/// toolbar and either translated segment plates or a scrollable explanation.
 @MainActor final class FillOverlay: NSObject {
     private var window: NSWindow?
-    private var regionRect: CGRect = .zero
+    private var dismissWatcher: DismissWatcher?
     private var onMode: (@MainActor (ImageMode) -> Void)?
 
     func show(
@@ -13,69 +12,17 @@ import AppKit
         result: ImageResult,
         mode: ImageMode,
         image: CGImage?,
+        onRefresh: (@MainActor () -> Void)? = nil,
         onMode: @escaping @MainActor (ImageMode) -> Void
     ) {
         close()
-        self.regionRect = rect
         self.onMode = onMode
 
-        NSLog(
-            "[BTFill] mode=%@ segments=%d translationLen=%d first=%@",
-            "\(mode)", result.segments.count, result.translation.count,
-            String(result.translation.prefix(80)))
-        // nothing recognised and nothing translated — an empty box over
-        // the whole region is the "black slab" bug, so bail out entirely
+        // An empty box over the whole region is the "black slab" bug.
         guard !result.segments.isEmpty || !result.translation.isEmpty
         else { return }
 
         let barH: CGFloat = 28
-        // icon toolbar pinned under the region's bottom edge (the classic
-        // screen-translate look); flips above the top edge when the region
-        // hugs the bottom of the screen
-        var barBelow = true
-        if let screen = NSScreen.screens.first(where: {
-            $0.frame.intersects(rect)
-        }), rect.minY - barH < screen.frame.minY {
-            barBelow = false
-        }
-        let segYOffset: CGFloat = barBelow ? barH : 0
-
-        let win = NSWindow(
-            contentRect: rect,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        win.isOpaque = false
-        win.backgroundColor = .clear
-        win.level = .floating
-        win.ignoresMouseEvents = false
-        win.collectionBehavior = [.canJoinAllSpaces, .stationary]
-        win.hasShadow = false
-
-        let root = NSView(
-            frame: NSRect(
-                origin: .zero,
-                size: CGSize(width: rect.width, height: rect.height + barH)
-            )
-        )
-        root.wantsLayer = true
-
-        let bar = NSView(
-            frame: NSRect(
-                x: 0,
-                y: barBelow ? 0 : rect.height,
-                width: rect.width,
-                height: barH
-            )
-        )
-        bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor(BTTheme.background)
-            .withAlphaComponent(0.96).cgColor
-        bar.layer?.cornerRadius = 6
-        bar.layer?.borderWidth = 1
-        bar.layer?.borderColor = NSColor(BTTheme.border).cgColor
-
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 2
@@ -94,73 +41,180 @@ import AppKit
             iconButton(
                 symbol: "doc.on.doc", tip: "Copy bản dịch", active: false
             ) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(result.translation, forType: .string)
+                Self.copy(result.translation)
             })
+        if !result.source.isEmpty {
+            stack.addArrangedSubview(
+                iconButton(symbol: "doc.plaintext", tip: "Copy bản gốc", active: false) {
+                    Self.copy(result.source)
+                })
+        }
+        stack.addArrangedSubview(
+            iconButton(symbol: "speaker.wave.2", tip: "Đọc bản dịch", active: false) {
+                BTSpeech.toggle(result.translation, lang: Settings.load().targetLang)
+            })
+        if let onRefresh {
+            stack.addArrangedSubview(
+                iconButton(symbol: "arrow.clockwise", tip: "Chụp lại", active: false) {
+                    onRefresh()
+                })
+        }
         stack.addArrangedSubview(
             iconButton(symbol: "xmark", tip: "Đóng", active: false) {
                 [weak self] in self?.close()
             })
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor)
-        ])
-        // compact pill hugging the icon row — a full-width strip reads as
-        // a heavy bar instead of a floating tool cluster
-        bar.frame.size.width = stack.arrangedSubviews.reduce(0) {
+        let barW = stack.arrangedSubviews.reduce(0) {
             $0 + $1.frame.width
         } + stack.spacing * CGFloat(stack.arrangedSubviews.count - 1)
             + stack.edgeInsets.left + stack.edgeInsets.right
-        root.addSubview(bar)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(center) })
+            ?? NSScreen.screens.first(where: { $0.frame.intersects(rect) })
+        let bounds = screen?.visibleFrame ?? rect.insetBy(dx: -300, dy: -300)
+        let width = min(max(max(rect.width, barW), mode == .explain ? 260 : 0), bounds.width)
+        let extrasX = min(max(rect.minX, bounds.minX), bounds.maxX - width)
 
-        // window = region + barH band; with the bar below, the band hangs
-        // under the region so segments shift up by barH inside the window
-        win.setFrame(
-            CGRect(
-                x: rect.minX,
-                y: barBelow ? rect.minY - barH : rect.minY,
-                width: rect.width,
-                height: rect.height + barH
-            ),
-            display: false
+        let text = result.translation as NSString
+        let textWidth = max(1, width - 44)
+        let measuredText = text.boundingRect(
+            with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: BTFont.sans(13)]
+        ).height
+        let desiredCardH = mode == .explain
+            ? min(max(160, ceil(measuredText) + 28), bounds.height * 0.4) : 0
+        let belowSpace = max(0, rect.minY - bounds.minY)
+        let aboveSpace = max(0, bounds.maxY - rect.maxY)
+        let barBelow = belowSpace >= barH + desiredCardH
+            || (aboveSpace < barH + desiredCardH && belowSpace >= aboveSpace)
+        let space = barBelow ? belowSpace : aboveSpace
+        let availableCardH = mode == .explain
+            ? min(desiredCardH, max(0, space - barH)) : 0
+        let usableRegion = rect.intersection(bounds)
+        let cardInside = mode == .explain && availableCardH < 100 && usableRegion.height >= 160
+        let cardH = cardInside
+            ? min(desiredCardH, usableRegion.height - barH) : availableCardH
+        let barInside = cardInside
+            || (mode == .translate && max(belowSpace, aboveSpace) < barH
+                && usableRegion.height >= barH)
+        let extrasH = barH + cardH
+        let preferredY = barInside ? usableRegion.minY
+            : (barBelow ? rect.minY - extrasH : rect.maxY)
+        let extrasY = min(max(preferredY, bounds.minY), bounds.maxY - extrasH)
+        let extrasFrame = CGRect(x: extrasX, y: extrasY, width: width, height: extrasH)
+        let windowFrame = rect.union(extrasFrame)
+        let regionX = rect.minX - windowFrame.minX
+        let regionY = rect.minY - windowFrame.minY
+        let extrasOffset = CGPoint(
+            x: extrasX - windowFrame.minX, y: extrasY - windowFrame.minY)
+        let win = NSWindow(
+            contentRect: windowFrame,
+            styleMask: [.borderless], backing: .buffered, defer: false
         )
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.level = .floating
+        win.ignoresMouseEvents = false
+        win.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        win.hasShadow = false
 
-        // thin veil over the whole captured region — gaps between
-        // segment plates show this tint instead of the raw page
-        let veil = NSView(
-            frame: CGRect(
-                x: 0, y: segYOffset, width: rect.width, height: rect.height))
-        veil.wantsLayer = true
-        veil.layer?.backgroundColor = (
-            image.flatMap {
-                averageColor(
-                    of: $0,
-                    box: Segment(
+        let root = NSView(frame: NSRect(origin: .zero, size: win.frame.size))
+        root.wantsLayer = true
+        if mode == .translate {
+            let veil = NSView(frame: CGRect(
+                x: regionX, y: regionY, width: rect.width, height: rect.height))
+            veil.wantsLayer = true
+            veil.layer?.backgroundColor = (
+                image.flatMap {
+                    averageColor(of: $0, box: Segment(
                         box: [0, 0, 1000, 1000], source: "", translation: ""))
-            } ?? NSColor(BTTheme.background)
-        ).withAlphaComponent(0.85).cgColor
-        root.addSubview(veil)
-
-        // segments — opaque boxes covering the original text
-        let segs = result.segments.isEmpty
-            ? [Segment(box: [0, 0, 1000, 1000], source: "", translation: result.translation)]
-            : result.segments
-        for s in segs {
-            root.addSubview(
-                segmentView(s, in: rect.size, yOffset: segYOffset, image: image)
-            )
+                } ?? NSColor(BTTheme.background)
+            ).withAlphaComponent(0.85).cgColor
+            root.addSubview(veil)
+            let segs = result.segments.isEmpty
+                ? [Segment(box: [0, 0, 1000, 1000], source: "", translation: result.translation)]
+                : result.segments
+            for s in segs {
+                root.addSubview(segmentView(
+                    s, in: rect.size, offset: CGPoint(x: regionX, y: regionY), image: image))
+            }
+        } else if cardH > 0 {
+            root.addSubview(explainCard(
+                text: result.translation,
+                frame: CGRect(x: extrasOffset.x,
+                              y: extrasOffset.y + (barBelow || cardInside ? 0 : barH),
+                              width: width, height: cardH)))
         }
+
+        let bar = NSView(frame: CGRect(
+            x: extrasOffset.x,
+            y: extrasOffset.y + (barBelow || barInside ? cardH : 0),
+            width: barW, height: barH))
+        bar.wantsLayer = true
+        bar.layer?.backgroundColor = NSColor(BTTheme.background)
+            .withAlphaComponent(0.96).cgColor
+        bar.layer?.cornerRadius = 6
+        bar.layer?.borderWidth = 1
+        bar.layer?.borderColor = NSColor(BTTheme.border).cgColor
+        stack.frame = bar.bounds
+        bar.addSubview(stack)
+        root.addSubview(bar)
 
         win.contentView = root
         win.orderFront(nil)
         window = win
+        dismissWatcher = DismissWatcher(frames: [win.frame]) { [weak self, weak win] in
+            guard self?.window === win else { return }
+            self?.close()
+        }
     }
 
     func close() {
+        dismissWatcher?.stop()
+        dismissWatcher = nil
+        BTSpeech.stop()
         window?.orderOut(nil)
         window = nil
+        onMode = nil
+    }
+
+    private func explainCard(text: String, frame: CGRect) -> NSView {
+        let card = NSView(frame: frame)
+        card.wantsLayer = true
+        card.layer?.backgroundColor = NSColor(BTTheme.background).cgColor
+        card.layer?.borderColor = NSColor(BTTheme.border).cgColor
+        card.layer?.borderWidth = 1
+        card.layer?.cornerRadius = 6
+
+        let scroll = NSScrollView(frame: card.bounds.insetBy(dx: 10, dy: 8))
+        scroll.autoresizingMask = [.width, .height]
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        let textView = NSTextView(frame: NSRect(
+            x: 0, y: 0, width: scroll.contentSize.width, height: scroll.contentSize.height))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = BTFont.sans(13)
+        textView.textColor = NSColor(BTTheme.primary)
+        textView.textContainerInset = NSSize(width: 6, height: 6)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: scroll.contentSize.width, height: .greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+        textView.string = text
+        scroll.documentView = textView
+        card.addSubview(scroll)
+        return card
+    }
+
+    private static func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// Map normalized 0-1000 box → a view positioned over the region. The
@@ -169,14 +223,14 @@ import AppKit
     /// quick inpaint), and bordered by nothing — the border is what made
     /// segments read as pasted labels.
     private func segmentView(
-        _ s: Segment, in size: CGSize, yOffset: CGFloat, image: CGImage?
+        _ s: Segment, in size: CGSize, offset: CGPoint, image: CGImage?
     ) -> NSView {
         let yMin = s.box[0] / 1000, xMin = s.box[1] / 1000
         let yMax = s.box[2] / 1000, xMax = s.box[3] / 1000
         // box y is top-down (image space); flip for Cocoa
         var f = CGRect(
-            x: xMin * size.width,
-            y: yOffset + (1 - yMax) * size.height,
+            x: offset.x + xMin * size.width,
+            y: offset.y + (1 - yMax) * size.height,
             width: max(1, (xMax - xMin) * size.width),
             height: max(1, (yMax - yMin) * size.height)
         )
@@ -193,7 +247,7 @@ import AppKit
             width: f.width + growL + growR,
             height: f.height + growV * 2
         ).intersection(
-            CGRect(x: 0, y: yOffset, width: size.width, height: size.height))
+            CGRect(origin: offset, size: size))
 
         let fill = image.flatMap { averageColor(of: $0, box: s) }
             ?? NSColor(BTTheme.background)
@@ -209,15 +263,13 @@ import AppKit
             attributes: [.font: font]
         ).size
         if need.height + 2 > f.height {
-            let bottom = max(yOffset, f.maxY - (need.height + 2))
+            let bottom = max(offset.y, f.maxY - (need.height + 2))
             f = CGRect(
                 x: f.minX, y: bottom,
                 width: f.width, height: f.maxY - bottom)
         }
 
-        let v = NSTextField(
-            wrappingLabelWithString: s.translation
-        )
+        let v = CopySegmentLabel(text: s.translation)
         v.frame = f
         v.isBezeled = false
         v.drawsBackground = true
@@ -231,6 +283,7 @@ import AppKit
         v.font = font
         v.wantsLayer = true
         v.layer?.cornerRadius = 3
+        v.toolTip = "Bấm để copy bản dịch"
         return v
     }
 
@@ -314,6 +367,31 @@ import AppKit
         b.toolTip = tip
         b.frame.size = NSSize(width: 24, height: 24)
         return b
+    }
+}
+
+private final class CopySegmentLabel: NSTextField {
+    init(text: String) {
+        super.init(frame: .zero)
+        stringValue = text
+        isEditable = false
+        isSelectable = false
+        cell?.wraps = true
+        cell?.isScrollable = false
+        lineBreakMode = .byWordWrapping
+        maximumNumberOfLines = 0
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func mouseDown(with event: NSEvent) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(stringValue, forType: .string)
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor(BTTheme.accent).cgColor
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.layer?.borderWidth = 0
+        }
     }
 }
 
