@@ -7,12 +7,14 @@ translation painted over the captured area.
 ## Features
 
 - **⇧⌘S** global hotkey (Carbon `RegisterEventHotKey`, no Accessibility perm)
+- **⇧⌘T** translates the current selection (Accessibility) or clipboard
+  fallback into a floating result panel
 - Region drag-select overlay on all screens, Esc cancels
 - ScreenCaptureKit capture → crop → downscale to ≤1280px JPEG (fast detect)
 - Providers: Gemini (inline_data) and OpenAI-compatible `chat/completions`
   (OpenAI / OpenRouter / Groq / Ollama / custom)
-- Fill overlay: per-segment opaque boxes on the original text + Dịch /
-  Giải thích toolbar — same JSON-segment protocol as the extension
+- Fill overlay: per-segment opaque boxes on the original text or a
+  scrollable explanation card, plus copy/speech/recapture controls
 - Alert popup fallback with Copy when fill is off
 
 ## Build & run
@@ -31,8 +33,8 @@ then restart it).
 ## Settings
 
 Menu-bar icon → Settings… — provider, API key, model, target language,
-fill toggle. Saved to UserDefaults. Leave Model empty for the per-provider
-vision default (gemini-3.1-flash-lite, gpt-4o-mini, qwen/qwen3.8-27b…).
+fill toggle, and both global shortcuts. Saved to UserDefaults. Leave Model
+empty for the per-provider vision default (gemini-3.1-flash-lite, gpt-4o-mini, qwen/qwen3.8-27b…).
 
 ## Layout
 
@@ -43,6 +45,7 @@ Sources/BNTransMac/
   Capture/RegionSelector.swift  per-screen drag overlay → CGRect
   Capture/ScreenShotter.swift   ScreenCaptureKit capture + pixel-accurate crop
   Overlay/FillOverlay.swift     borderless overlay: pill bar + segment views
+  Overlay/TextResultPanel.swift floating text translation result card
   Providers/Prompts.swift       OCR/explain prompts (ported from the extension)
   Providers/AIProviders.swift   translateImage for Gemini + OpenAI-compatible
   Settings/Settings.swift       UserDefaults config
@@ -51,6 +54,6 @@ Sources/BNTransMac/
 
 ## Not yet
 
-- Explain-mode card layout (currently fills the region as one block)
+- Launch at login and recent-translation history
 - Target-language picker on the overlay
 - .app bundle + notarization for distribution

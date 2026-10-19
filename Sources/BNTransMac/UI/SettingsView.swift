@@ -282,6 +282,7 @@ private struct SettingsSidebar: View {
 
 private struct GeneralPane: View {
     @Binding var settings: Settings
+    @Binding var shortcutConflict: Bool
 
     var body: some View {
         SettingsPage {
@@ -316,6 +317,23 @@ private struct GeneralPane: View {
                         keyCode: $settings.hotkeyKeyCode,
                         modifiers: $settings.hotkeyModifiers
                     )
+                }
+
+                SettingsLabeledRow(
+                    title: "Translate text",
+                    subtitle: "Translate the current selection, or the clipboard as a fallback"
+                ) {
+                    HotkeyRecorder(
+                        keyCode: $settings.hotkeyKeyCode2,
+                        modifiers: $settings.hotkeyModifiers2
+                    )
+                }
+
+                if shortcutConflict {
+                    Text("Capture and text shortcuts must be different.")
+                        .font(.plexSans(11))
+                        .foregroundStyle(BTTheme.warning)
+                        .padding(.top, 8)
                 }
             }
         }
@@ -665,6 +683,8 @@ private struct AboutPane: View {
 /// three panes.
 struct SettingsView: View {
     @State private var settings = Settings.load()
+    @State private var shortcutConflict = false
+    @State private var applyingShortcutFix = false
     @State private var tab: SettingsTab =
         CommandLine.arguments.contains("--open-select")
             || CommandLine.arguments.contains("--click-select")
@@ -683,16 +703,83 @@ struct SettingsView: View {
         .frame(width: 720, height: 560)
         .overlay(SettingsWindowAppearanceView().frame(width: 0, height: 0))
         .tint(BTTheme.accent)
+        .onAppear(perform: normalizeShortcuts)
         // Auto-save — System Settings style: every change persists and
         // re-applies (theme, hotkey) immediately via .bntransSettingsChanged.
-        .onChange(of: settings) { _, value in
+        .onChange(of: settings) { old, value in
+            if applyingShortcutFix {
+                applyingShortcutFix = false
+                value.save()
+                return
+            }
+            if shortcutsConflict(value) {
+                var fixed = value
+                if old.hotkeyKeyCode != value.hotkeyKeyCode
+                    || old.hotkeyModifiers != value.hotkeyModifiers
+                {
+                    fixed.hotkeyKeyCode = old.hotkeyKeyCode
+                    fixed.hotkeyModifiers = old.hotkeyModifiers
+                } else {
+                    fixed.hotkeyKeyCode2 = old.hotkeyKeyCode2
+                    fixed.hotkeyModifiers2 = old.hotkeyModifiers2
+                }
+                if shortcutsConflict(fixed) {
+                    let fallback = fallbackTextShortcut(
+                        captureKey: fixed.hotkeyKeyCode,
+                        captureModifiers: fixed.hotkeyModifiers)
+                    fixed.hotkeyKeyCode2 = fallback.key
+                    fixed.hotkeyModifiers2 = fallback.modifiers
+                }
+                shortcutConflict = true
+                applyingShortcutFix = true
+                settings = fixed
+                return
+            }
+            if old.hotkeyKeyCode != value.hotkeyKeyCode
+                || old.hotkeyModifiers != value.hotkeyModifiers
+                || old.hotkeyKeyCode2 != value.hotkeyKeyCode2
+                || old.hotkeyModifiers2 != value.hotkeyModifiers2
+            {
+                shortcutConflict = false
+            }
             value.save()
         }
     }
 
+    private func normalizeShortcuts() {
+        guard shortcutsConflict(settings) else { return }
+        var fixed = settings
+        let fallback = fallbackTextShortcut(
+            captureKey: fixed.hotkeyKeyCode,
+            captureModifiers: fixed.hotkeyModifiers)
+        fixed.hotkeyKeyCode2 = fallback.key
+        fixed.hotkeyModifiers2 = fallback.modifiers
+        shortcutConflict = true
+        applyingShortcutFix = true
+        settings = fixed
+    }
+
+    private func shortcutsConflict(_ settings: Settings) -> Bool {
+        settings.hotkeyKeyCode == settings.hotkeyKeyCode2
+            && settings.hotkeyModifiers == settings.hotkeyModifiers2
+    }
+
+    private func fallbackTextShortcut(
+        captureKey: Int,
+        captureModifiers: Int
+    ) -> (key: Int, modifiers: Int) {
+        let preferred = (key: 17, modifiers: 768) // ⇧⌘T
+        if captureKey != preferred.key || captureModifiers != preferred.modifiers {
+            return preferred
+        }
+        return (key: 3, modifiers: 768) // ⇧⌘F
+    }
+
     @ViewBuilder private var pane: some View {
         switch tab {
-        case .general: GeneralPane(settings: $settings)
+        case .general: GeneralPane(
+            settings: $settings,
+            shortcutConflict: $shortcutConflict)
         case .provider: ProviderPane(settings: $settings)
         case .capture: CapturePane(settings: $settings)
         case .about: AboutPane()

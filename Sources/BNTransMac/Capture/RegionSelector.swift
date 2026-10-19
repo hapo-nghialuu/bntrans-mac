@@ -28,7 +28,7 @@ typealias RegionCompletion = @MainActor (CGRect?) -> Void
             let view = SelectionView(screenFrame: screen.frame) { [weak self] rect in
                 self?.finish(rect: rect, completion: completion)
             }
-            let panel = NSPanel(
+            let panel = SelectionPanel(
                 contentRect: screen.frame,
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
@@ -42,6 +42,7 @@ typealias RegionCompletion = @MainActor (CGRect?) -> Void
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.contentView = view
             panel.makeKeyAndOrderFront(nil)
+            panel.makeFirstResponder(view)
             panels.append(panel)
         }
     }
@@ -53,6 +54,10 @@ typealias RegionCompletion = @MainActor (CGRect?) -> Void
         panels.removeAll()
         completion(rect)
     }
+}
+
+private final class SelectionPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }
 
 /// Per-screen drag view: dims everything, cuts a clear hole + border for
