@@ -1,5 +1,5 @@
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import Carbon
 import SwiftUI
 
@@ -426,7 +426,7 @@ import SwiftUI
         var focusedValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             systemWide,
-            kAXFocusedUIElement as CFString,
+            kAXFocusedUIElementAttribute as CFString,
             &focusedValue
         ) == .success, let focusedValue else { return nil }
         let focused = focusedValue as! AXUIElement
