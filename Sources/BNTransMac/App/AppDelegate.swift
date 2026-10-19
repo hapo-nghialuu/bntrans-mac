@@ -8,7 +8,7 @@ import SwiftUI
     private var hotKeyHandlerInstalled = false
     private let overlay = FillOverlay()
     private var lastCropped: CGImage?
-    private var lastRect: CGRect = .zero
+    private var captureGeneration = 0
     private var settingsWindow: NSWindow?
     private var captureMenuItem: NSMenuItem?
 
@@ -168,21 +168,37 @@ import SwiftUI
     }
 
     @objc private func captureClicked() {
+        captureGeneration += 1
+        let generation = captureGeneration
+        overlay.close()
         RegionSelector.select { [weak self] rect in
-            guard let self, let rect else { return }
-            self.lastRect = rect
+            guard let self, let rect, self.captureGeneration == generation else { return }
             self.lastCropped = nil
-            Task { await self.run(rect: rect, mode: .translate) }
+            Task { await self.run(rect: rect, mode: .translate, generation: generation) }
         }
     }
 
-    private func run(rect: CGRect, mode: ImageMode) async {
+    private func rerun(rect: CGRect, mode: ImageMode, recapture: Bool) {
+        captureGeneration += 1
+        overlay.close()
+        if recapture {
+            lastCropped = nil
+        }
+        let generation = captureGeneration
+        Task { await run(rect: rect, mode: mode, generation: generation) }
+    }
+
+    private func run(rect: CGRect, mode: ImageMode, generation: Int) async {
         let settings = Settings.load()
         do {
-            if lastCropped == nil {
-                lastCropped = try await captureRegion(rect)
+            let cropped: CGImage
+            if let cached = lastCropped {
+                cropped = cached
+            } else {
+                cropped = try await captureRegion(rect)
+                guard generation == captureGeneration else { return }
+                lastCropped = cropped
             }
-            guard let cropped = lastCropped else { return }
             let maxDim: CGFloat = 1280
             let rep = NSBitmapImageRep(cgImage: cropped)
             let scale = min(
@@ -206,34 +222,35 @@ import SwiftUI
                 targetLang: settings.targetLang,
                 mode: mode
             )
-            _ = await MainActor.run {
-                if settings.fillEnabled {
-                    overlay.show(
-                        rect: rect, result: result, mode: mode,
-                        image: cropped
-                    ) { [weak self] m in
-                        Task { await self?.run(rect: rect, mode: m) }
+            guard generation == captureGeneration else { return }
+            if settings.fillEnabled {
+                overlay.show(
+                    rect: rect, result: result, mode: mode,
+                    image: cropped,
+                    onRefresh: { [weak self] in
+                        self?.rerun(rect: rect, mode: mode, recapture: true)
                     }
-                } else {
-                    // popup fallback — translation text in a plain alert
-                    let a = NSAlert()
-                    a.messageText = "Translation"
-                    a.informativeText = result.translation
-                    a.addButton(withTitle: "Copy")
-                    a.addButton(withTitle: "Close")
-                    if a.runModal() == .alertFirstButtonReturn {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(
-                            result.translation,
-                            forType: .string
-                        )
-                    }
+                ) { [weak self] m in
+                    self?.rerun(rect: rect, mode: m, recapture: false)
+                }
+            } else {
+                // popup fallback — translation text in a plain alert
+                let a = NSAlert()
+                a.messageText = "Translation"
+                a.informativeText = result.translation
+                a.addButton(withTitle: "Copy")
+                a.addButton(withTitle: "Close")
+                if a.runModal() == .alertFirstButtonReturn {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        result.translation,
+                        forType: .string
+                    )
                 }
             }
         } catch {
-            _ = await MainActor.run {
-                NSAlert.error(with: error.localizedDescription).runModal()
-            }
+            guard generation == captureGeneration else { return }
+            NSAlert.error(with: error.localizedDescription).runModal()
         }
     }
 
